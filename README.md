@@ -30,7 +30,9 @@ house_diffusion
 └── scripts
 └── ...
 ```
-- We have provided a temporary model that you can download from [Google Drive](https://drive.google.com/file/d/16zKmtxwY5lF6JE-CJGkRf3-OFoD1TrdR/view?usp=share_link). 
+- We have provided a temporary model that you can download from [Google Drive](https://drive.google.com/file/d/16zKmtxwY5lF6JE-CJGkRf3-OFoD1TrdR/view?usp=share_link).
+
+> **NOTE:** We have recently received many requests regarding issues with downloading the RPLAN dataset. If you are looking for an alternative, we highly recommend using the **MagicPlan** dataset provided in our [PuzzleFusion](https://github.com/sepidsh/PuzzleFussion?tab=readme-ov-file#magicplan) paper. MagicPlan is a real-world dataset of room layouts constructed via AR, and the link includes both the data and the necessary reader.
 
 ## Running the code
 
