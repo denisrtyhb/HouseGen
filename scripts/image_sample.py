@@ -295,6 +295,7 @@ def main():
     )
     model.to(dist_util.dev())
     model.eval()
+    print("Model and diffusion created!")
 
     errors = []
     for _ in range(5):
