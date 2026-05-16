@@ -38,6 +38,7 @@ def main():
             analog_bit=args.analog_bit,
             target_set=args.target_set,
             set_name=args.set_name,
+            max_length=args.max_length,
         )
     else:
         print('dataset not exist!')
@@ -80,9 +81,15 @@ def create_argparser():
         use_fp16=False,
         fp16_scale_growth=1e-3,
     )
-    parser = argparse.ArgumentParser()
     defaults.update(model_and_diffusion_defaults())
+    parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
+    parser.add_argument(
+        "--max_length",
+        type=int,
+        default=None,
+        help="Load at most this many floorplan samples from processed rplan data",
+    )
     return parser
 
 

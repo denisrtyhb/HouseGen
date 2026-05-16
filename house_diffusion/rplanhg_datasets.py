@@ -8,6 +8,7 @@ from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 from glob import glob
+import gc
 import json
 import os
 import cv2 as cv
@@ -123,6 +124,7 @@ def load_rplanhg_data(
     analog_bit,
     target_set = 8,
     set_name = 'train',
+    max_length=None,
 ):
     """
     For a dataset, create a generator over (shapes, kwargs) pairs.
@@ -130,7 +132,8 @@ def load_rplanhg_data(
     rank = MPI.COMM_WORLD.Get_rank()
     print(
         f"[load_rplanhg_data] rank={rank} start batch_size={batch_size} "
-        f"analog_bit={analog_bit} target_set={target_set} set_name={set_name!r}",
+        f"analog_bit={analog_bit} target_set={target_set} set_name={set_name!r} "
+        f"max_length={max_length!r}",
         flush=True,
     )
 
@@ -140,7 +143,9 @@ def load_rplanhg_data(
     print(f"[load_rplanhg_data] rank={rank} after deterministic={deterministic}", flush=True)
 
     print(f"[load_rplanhg_data] rank={rank} before RPlanhgDataset(...)", flush=True)
-    dataset = RPlanhgDataset(set_name, analog_bit, target_set)
+    dataset = RPlanhgDataset(
+        set_name, analog_bit, target_set, max_length=max_length
+    )
     print(f"[load_rplanhg_data] rank={rank} after RPlanhgDataset(...)", flush=True)
 
     print_rplanhg_dataset_storage_estimate(dataset)
@@ -217,12 +222,23 @@ def make_non_manhattan(poly, polygon, house_poly):
 get_bin = lambda x, z: [int(y) for y in format(x, 'b').zfill(z)]
 get_one_hot = lambda x, z: np.eye(z)[x]
 class RPlanhgDataset(Dataset):
-    def __init__(self, set_name, analog_bit, target_set, non_manhattan=False):
+    def __init__(
+        self,
+        set_name,
+        analog_bit,
+        target_set,
+        non_manhattan=False,
+        max_length=None,
+    ):
         super().__init__()
         rank = MPI.COMM_WORLD.Get_rank()
+        self.max_length = (
+            int(max_length) if max_length is not None and int(max_length) > 0 else None
+        )
         print(
             f"[RPlanhgDataset] rank={rank} __init__ start set_name={set_name!r} "
-            f"analog_bit={analog_bit} target_set={target_set}",
+            f"analog_bit={analog_bit} target_set={target_set} "
+            f"max_length_arg={max_length!r} max_length_cap={self.max_length!r}",
             flush=True,
         )
         base_dir = '../datasets/rplan'
@@ -250,11 +266,27 @@ class RPlanhgDataset(Dataset):
                 flush=True,
             )
             data = np.load(_processed_npz, allow_pickle=True)
-            self.graphs = data['graphs']
-            self.houses = data['houses']
-            self.door_masks = data['door_masks']
-            self.self_masks = data['self_masks']
-            self.gen_masks = data['gen_masks']
+            _nh = len(data["houses"])
+            if self.max_length is not None:
+                _take = min(self.max_length, _nh)
+                self.graphs = np.copy(data["graphs"][:_take])
+                self.houses = np.copy(data["houses"][:_take])
+                self.door_masks = np.copy(data["door_masks"][:_take])
+                self.self_masks = np.copy(data["self_masks"][:_take])
+                self.gen_masks = np.copy(data["gen_masks"][:_take])
+                print(
+                    f"[RPlanhgDataset] rank={rank} truncated main arrays to {_take} rows "
+                    f"(max_length={self.max_length}, on_disk={_nh})",
+                    flush=True,
+                )
+            else:
+                self.graphs = data["graphs"]
+                self.houses = data["houses"]
+                self.door_masks = data["door_masks"]
+                self.self_masks = data["self_masks"]
+                self.gen_masks = data["gen_masks"]
+            del data
+            gc.collect()
             self.num_coords = 2
             self.max_num_points = max_num_points
             cnumber_dist = np.load(f'processed_rplan/rplan_train_{target_set}_cndist.npz', allow_pickle=True)['cnumber_dist'].item()
@@ -286,12 +318,28 @@ class RPlanhgDataset(Dataset):
                         flush=True,
                     )
                 mem_print_rss("RPlanhgDataset: immediately before np.load(syn)")
-                data = np.load(_syn_npz, allow_pickle=True)
-                self.syn_graphs = data['graphs']
-                self.syn_houses = data['houses']
-                self.syn_door_masks = data['door_masks']
-                self.syn_self_masks = data['self_masks']
-                self.syn_gen_masks = data['gen_masks']
+                syn_data = np.load(_syn_npz, allow_pickle=True)
+                _ns = len(syn_data["houses"])
+                if self.max_length is not None:
+                    _take_s = min(self.max_length, _ns)
+                    self.syn_graphs = np.copy(syn_data["graphs"][:_take_s])
+                    self.syn_houses = np.copy(syn_data["houses"][:_take_s])
+                    self.syn_door_masks = np.copy(syn_data["door_masks"][:_take_s])
+                    self.syn_self_masks = np.copy(syn_data["self_masks"][:_take_s])
+                    self.syn_gen_masks = np.copy(syn_data["gen_masks"][:_take_s])
+                    print(
+                        f"[RPlanhgDataset] rank={rank} truncated syn arrays to {_take_s} rows "
+                        f"(max_length={self.max_length}, on_disk={_ns})",
+                        flush=True,
+                    )
+                else:
+                    self.syn_graphs = syn_data["graphs"]
+                    self.syn_houses = syn_data["houses"]
+                    self.syn_door_masks = syn_data["door_masks"]
+                    self.syn_self_masks = syn_data["self_masks"]
+                    self.syn_gen_masks = syn_data["gen_masks"]
+                del syn_data
+                gc.collect()
                 for _fld in (
                     "syn_graphs",
                     "syn_houses",
@@ -330,6 +378,15 @@ class RPlanhgDataset(Dataset):
                         continue
                 a = [rms_type, rms_bbs, fp_eds, eds_to_rms]
                 self.subgraphs.append(a)
+
+            if self.max_length is not None and len(self.subgraphs) > 0:
+                _tg = min(self.max_length, len(self.subgraphs))
+                self.subgraphs = self.subgraphs[:_tg]
+                print(
+                    f"[RPlanhgDataset] rank={rank} truncated scratch subgraphs to {_tg}",
+                    flush=True,
+                )
+
             for graph in tqdm(self.subgraphs):
                 rms_type = graph[0]
                 rms_bbs = graph[1]
@@ -432,6 +489,18 @@ class RPlanhgDataset(Dataset):
                 self_masks.append(self_mask)
                 gen_masks.append(gen_mask)
                 graphs.append(graph)
+            if self.max_length is not None and len(houses) > 0:
+                _tl = min(self.max_length, len(houses))
+                houses = houses[:_tl]
+                door_masks = door_masks[:_tl]
+                self_masks = self_masks[:_tl]
+                gen_masks = gen_masks[:_tl]
+                graphs = graphs[:_tl]
+                gc.collect()
+                print(
+                    f"[RPlanhgDataset] rank={rank} truncated built train/main lists to {_tl}",
+                    flush=True,
+                )
             self.max_num_points = max_num_points
             self.houses = houses
             self.door_masks = door_masks
@@ -506,6 +575,18 @@ class RPlanhgDataset(Dataset):
                     self_masks.append(self_mask)
                     gen_masks.append(gen_mask)
                     graphs.append(graph)
+                if self.max_length is not None and len(houses) > 0:
+                    _ts = min(self.max_length, len(houses))
+                    houses = houses[:_ts]
+                    door_masks = door_masks[:_ts]
+                    self_masks = self_masks[:_ts]
+                    gen_masks = gen_masks[:_ts]
+                    graphs = graphs[:_ts]
+                    gc.collect()
+                    print(
+                        f"[RPlanhgDataset] rank={rank} truncated built scratch syn lists to {_ts}",
+                        flush=True,
+                    )
                 self.syn_houses = houses
                 self.syn_door_masks = door_masks
                 self.syn_self_masks = self_masks
