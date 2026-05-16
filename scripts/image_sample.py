@@ -295,6 +295,21 @@ def main():
     )
     model.to(dist_util.dev())
     model.eval()
+    _model_mem = sum(
+        t.numel() * t.element_size()
+        for t in list(model.parameters()) + list(model.buffers())
+    )
+    print(
+        f"Model tensor memory (parameters+buffers): {_model_mem / (1024 ** 3):.4f} GiB "
+        f"({_model_mem} bytes)",
+        flush=True,
+    )
+    if th.cuda.is_available():
+        print(
+            f"CUDA memory allocated after model load: "
+            f"{th.cuda.memory_allocated() / (1024 ** 3):.4f} GiB",
+            flush=True,
+        )
     print("Model and diffusion created!", flush=True)
 
     errors = []
