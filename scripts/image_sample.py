@@ -279,16 +279,16 @@ def save_samples(
                 for corner in poly:
                     draw.append(drawsvg.Circle(corner[0], corner[1], 2*(resolution/256), fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='gray', stroke_width=0.25))
                     draw3.append(drawsvg.Circle(corner[0], corner[1], 2*(resolution/256), fill=ID_COLOR[room_type], fill_opacity=1.0, stroke='gray', stroke_width=0.25))
-            images.append(Image.open(io.BytesIO(cairosvg.svg2png(draw.asSvg()))))
-            images2.append(Image.open(io.BytesIO(cairosvg.svg2png(draw2.asSvg()))))
-            images3.append(Image.open(io.BytesIO(cairosvg.svg2png(draw3.asSvg()))))
+            images.append(Image.open(io.BytesIO(cairosvg.svg2png(draw.as_svg()))))
+            images2.append(Image.open(io.BytesIO(cairosvg.svg2png(draw2.as_svg()))))
+            images3.append(Image.open(io.BytesIO(cairosvg.svg2png(draw3.as_svg()))))
             if k==sample.shape[0]-1 or True:
                 if save_edges:
                     draw.saveSvg(f'outputs/{ext}/{tmp_count+i}_{k}_{ext}.svg')
                 if save_svg:
                     draw_color.saveSvg(f'outputs/{ext}/{tmp_count+i}c_{k}_{ext}.svg')
                 else:
-                    Image.open(io.BytesIO(cairosvg.svg2png(draw_color.asSvg()))).save(f'outputs/{ext}/{tmp_count+i}c_{ext}.png')
+                    Image.open(io.BytesIO(cairosvg.svg2png(draw_color.as_svg()))).save(f'outputs/{ext}/{tmp_count+i}c_{ext}.png')
             if k==sample.shape[0]-1:
                 if 'graph' in model_kwargs:
                     graph_errors.append(estimate_graph(tmp_count+i, polys, types, model_kwargs[f'{prefix}graph'][i], ID_COLOR=ID_COLOR, draw_graph=draw_graph, save_svg=save_svg))
