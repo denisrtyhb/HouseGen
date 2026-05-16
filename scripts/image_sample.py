@@ -29,9 +29,8 @@ from house_diffusion.script_util import (
 import webcolors
 import networkx as nx
 from collections import defaultdict
+from shapely.validation import make_valid
 from shapely.geometry import Polygon
-from shapely.geometry.base import geom_factory
-from shapely import _geos as lgeos
 
 # import random
 # th.manual_seed(0)
@@ -158,9 +157,9 @@ def estimate_graph(indx, polys, nodes, G_gt, ID_COLOR, draw_graph, save_svg):
                 p1, p2 = polys[k], polys[l]
                 p1, p2 = Polygon(p1), Polygon(p2)
                 if not p1.is_valid:
-                    p1 = geom_factory(lgeos.GEOSMakeValid(p1._geom))
+                    p1 = make_valid(p1)
                 if not p2.is_valid:
-                    p2 = geom_factory(lgeos.GEOSMakeValid(p2._geom))
+                    p2 = make_valid(p2)
                 iou = p1.intersection(p2).area/ p1.union(p2).area
                 if iou > 0 and iou < 0.2:
                     doors_rooms_map[k].append((l, iou))
