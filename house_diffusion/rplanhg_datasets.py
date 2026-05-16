@@ -222,7 +222,11 @@ class RPlanhgDataset(Dataset):
         )
         if os.path.exists(_processed_npz):
             print(f"[RPlanhgDataset] rank={rank} before np.load main processed npz", flush=True)
-            print("Size of processed npz: ", os.path.getsize(_processed_npz))
+            print(
+                f"[mem] rank={rank} main npz on-disk size: {os.path.getsize(_processed_npz)} bytes "
+                f"(~{os.path.getsize(_processed_npz) / (1024**3):.4f} GiB)",
+                flush=True,
+            )
             data = np.load(_processed_npz, allow_pickle=True)
             self.graphs = data['graphs']
             self.houses = data['houses']
@@ -236,9 +240,22 @@ class RPlanhgDataset(Dataset):
                 f"[RPlanhgDataset] rank={rank} after main npz: len(houses)={len(self.houses)} len(graphs)={len(self.graphs)}",
                 flush=True,
             )
+            mem_print_rss("RPlanhgDataset: after main .npz arrays, before syn load")
             if self.set_name == 'eval':
                 _syn_npz = f'processed_rplan/rplan_{set_name}_{target_set}_syn.npz'
-                print(f"[RPlanhgDataset] rank={rank} before np.load {_syn_npz!r}", flush=True)
+                _syn_exists = os.path.exists(_syn_npz)
+                print(
+                    f"[RPlanhgDataset] rank={rank} before np.load {_syn_npz!r} exists={_syn_exists}",
+                    flush=True,
+                )
+                if _syn_exists:
+                    _sz = os.path.getsize(_syn_npz)
+                    print(
+                        f"[mem] rank={rank} syn npz on-disk size: {_sz} bytes "
+                        f"(~{_sz / (1024**3):.4f} GiB)",
+                        flush=True,
+                    )
+                mem_print_rss("RPlanhgDataset: immediately before np.load(syn)")
                 data = np.load(_syn_npz, allow_pickle=True)
                 self.syn_graphs = data['graphs']
                 self.syn_houses = data['houses']
@@ -249,6 +266,13 @@ class RPlanhgDataset(Dataset):
                     f"[RPlanhgDataset] rank={rank} after syn npz: len(syn_houses)={len(self.syn_houses)}",
                     flush=True,
                 )
+                mem_print_rss("RPlanhgDataset: after np.load(syn) [if missing, OOM during syn load]")
+            print(
+                f"[mem] rank={rank} RPlanhgDataset full storage estimate (inside __init__, before load_rplanhg_data resumes)",
+                flush=True,
+            )
+            print_rplanhg_dataset_storage_estimate(self)
+            mem_print_rss("RPlanhgDataset __init__ finished (cached .npz branch)")
         else:
             print(
                 f"[RPlanhgDataset] rank={rank} no processed npz; building from {base_dir!r}",
