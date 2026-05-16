@@ -5,6 +5,7 @@ numpy array. This can be used to produce samples for FID evaluation.
 
 import argparse
 import os
+from pathlib import Path
 
 import numpy as np
 import torch as th
@@ -299,6 +300,38 @@ def save_samples(
             imageio.mimwrite(f'outputs/gif/{tmp_count+i}_v3.gif', images3, fps=10, loop=1)
     return graph_errors
 
+
+def convert_folder(folder_name):
+    """
+    Create ``{folder_name}_png`` alongside ``folder_name`` (same parent dir):
+    rasterize SVGs to PNG and normalize other raster images to PNG for FID.
+    """
+    src = Path(folder_name).resolve()
+    if not src.is_dir():
+        raise FileNotFoundError(f"convert_folder: not a directory: {src}")
+    dst = src.parent / f"{src.name}_png"
+    dst.mkdir(parents=True, exist_ok=True)
+
+    svg_ext = {".svg"}
+    raster_ext = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
+
+    n_conv = 0
+    for p in sorted(src.iterdir()):
+        if not p.is_file():
+            continue
+        suf = p.suffix.lower()
+        out_path = dst / f"{p.stem}.png"
+        if suf in svg_ext:
+            out_path.write_bytes(cairosvg.svg2png(url=str(p)))
+            n_conv += 1
+        elif suf in raster_ext:
+            Image.open(p).convert("RGB").save(out_path, format="PNG")
+            n_conv += 1
+
+    print(f"convert_folder: {src} -> {dst} ({n_conv} images)", flush=True)
+    return str(dst)
+
+
 def main():
     args = create_argparser().parse_args()
     update_arg_parser(args)
@@ -413,7 +446,11 @@ def main():
             graph_errors.extend(graph_error)
             tmp_count+=sample_gt.shape[1]
         logger.log("sampling complete")
-        fid_score = calculate_fid_given_paths(['outputs/gt', 'outputs/pred'], 64, 'cuda', 2048)
+        fid_gt_png = convert_folder("outputs/gt")
+        fid_pred_png = convert_folder("outputs/pred")
+        fid_score = calculate_fid_given_paths(
+            [fid_gt_png, fid_pred_png], 64, "cuda", 2048
+        )
         mem_print_rss("after calculate_fid_given_paths")
         _mem_cuda_print("after FID")
         print(f'FID: {fid_score}')
