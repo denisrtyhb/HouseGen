@@ -320,6 +320,7 @@ def main():
         else:
             print("dataset does not exist!")
             assert False
+        print("Data loading complete!")
         graph_errors = []
         while tmp_count < args.num_samples:
             print("Sampling loop iteration: ", tmp_count)
