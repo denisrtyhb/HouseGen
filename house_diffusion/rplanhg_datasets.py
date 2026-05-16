@@ -26,20 +26,36 @@ def load_rplanhg_data(
     """
     For a dataset, create a generator over (shapes, kwargs) pairs.
     """
-    print(f"loading {set_name} of target set {target_set}")
-    deterministic = False if set_name=='train' else True
-    print("Creating dataset...")
+    rank = MPI.COMM_WORLD.Get_rank()
+    print(
+        f"[load_rplanhg_data] rank={rank} start batch_size={batch_size} "
+        f"analog_bit={analog_bit} target_set={target_set} set_name={set_name!r}",
+        flush=True,
+    )
+
+    print(f"[load_rplanhg_data] rank={rank} loading {set_name} of target set {target_set}", flush=True)
+
+    deterministic = False if set_name == "train" else True
+    print(f"[load_rplanhg_data] rank={rank} after deterministic={deterministic}", flush=True)
+
+    print(f"[load_rplanhg_data] rank={rank} before RPlanhgDataset(...)", flush=True)
     dataset = RPlanhgDataset(set_name, analog_bit, target_set)
-    print("Dataset created!")
+    print(f"[load_rplanhg_data] rank={rank} after RPlanhgDataset(...)", flush=True)
+
     if deterministic:
+        print(f"[load_rplanhg_data] rank={rank} branch deterministic: before DataLoader", flush=True)
         loader = DataLoader(
             dataset, batch_size=batch_size, shuffle=False, num_workers=2, drop_last=False
         )
+        print(f"[load_rplanhg_data] rank={rank} branch deterministic: after DataLoader", flush=True)
     else:
+        print(f"[load_rplanhg_data] rank={rank} branch train: before DataLoader", flush=True)
         loader = DataLoader(
             dataset, batch_size=batch_size, shuffle=True, num_workers=2, drop_last=False
         )
-    print("Loader created!")
+        print(f"[load_rplanhg_data] rank={rank} branch train: after DataLoader", flush=True)
+
+    print(f"[load_rplanhg_data] rank={rank} before while True generator", flush=True)
     while True:
         yield from loader
 

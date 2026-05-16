@@ -295,7 +295,7 @@ def main():
     )
     model.to(dist_util.dev())
     model.eval()
-    print("Model and diffusion created!")
+    print("Model and diffusion created!", flush=True)
 
     errors = []
     for _ in range(5):
@@ -321,10 +321,10 @@ def main():
         else:
             print("dataset does not exist!")
             assert False
-        print("Data loading complete!")
+        print("Data loading complete!", flush=True)
         graph_errors = []
         while tmp_count < args.num_samples:
-            print("Sampling loop iteration: ", tmp_count)
+            print("Sampling loop iteration: ", tmp_count, flush=True)
             model_kwargs = {}
             sample_fn = (
                 diffusion.p_sample_loop if not args.use_ddim else diffusion.ddim_sample_loop
@@ -333,7 +333,7 @@ def main():
             for key in model_kwargs:
                 model_kwargs[key] = model_kwargs[key].cuda()
 
-            print("Starting sample generation...")
+            print("Starting sample generation...", flush=True)
             sample = sample_fn(
                 model,
                 data_sample.shape,
@@ -341,19 +341,19 @@ def main():
                 model_kwargs=model_kwargs,
                 analog_bit=args.analog_bit,
             )
-            print("Sample generation complete!")
+            print("Sample generation complete!", flush=True)
             sample_gt = data_sample.cuda().unsqueeze(0)
             sample = sample.permute([0, 1, 3, 2])
             sample_gt = sample_gt.permute([0, 1, 3, 2])
             if args.analog_bit:
                 sample_gt = bin_to_int_sample(sample_gt)
                 sample = bin_to_int_sample(sample)
-            print("Bin to int conversion complete!")
-            print("Saving samples...")
+            print("Bin to int conversion complete!", flush=True)
+            print("Saving samples...", flush=True)
             graph_error = save_samples(sample_gt, 'gt', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, draw_graph=args.draw_graph, save_svg=args.save_svg)
-            print("Saving samples complete!")
+            print("Saving samples complete!", flush=True)
             graph_error = save_samples(sample, 'pred', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, is_syn=True, draw_graph=args.draw_graph, save_svg=args.save_svg)
-            print("Saving synthetic samples complete!")
+            print("Saving synthetic samples complete!", flush=True)
             graph_errors.extend(graph_error)
             tmp_count+=sample_gt.shape[1]
         logger.log("sampling complete")
