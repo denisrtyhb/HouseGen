@@ -103,7 +103,34 @@ def load_state_dict(path, **kwargs):
         print(f"[load_state_dict] rank={rank} finished receiving all chunks", flush=True)
 
     print(f"[load_state_dict] rank={rank} before th.load len(data)={len(data)}", flush=True)
+    _blob_n = len(data)
+    try:
+        import psutil
+
+        _rss_b = psutil.Process(os.getpid()).memory_info().rss / (1024**3)
+        print(
+            f"[mem] rank={rank} checkpoint serialized blob {_blob_n} bytes "
+            f"({_blob_n / (1024**3):.4f} GiB); RSS before torch.load ~{_rss_b:.4f} GiB",
+            flush=True,
+        )
+    except Exception:
+        print(
+            f"[mem] rank={rank} checkpoint serialized blob {_blob_n} bytes "
+            f"({_blob_n / (1024**3):.4f} GiB) — pip install psutil for RSS",
+            flush=True,
+        )
     out = th.load(io.BytesIO(data), **kwargs)
+    del data
+    try:
+        import psutil
+
+        _rss_a = psutil.Process(os.getpid()).memory_info().rss / (1024**3)
+        print(
+            f"[mem] rank={rank} RSS after torch.load (~unpacked state on CPU ranks): ~{_rss_a:.4f} GiB",
+            flush=True,
+        )
+    except Exception:
+        pass
     print(f"[load_state_dict] rank={rank} after th.load", flush=True)
     return out
 

@@ -17,6 +17,85 @@ from shapely.ops import unary_union
 from collections import defaultdict
 import copy
 
+
+def mem_rss_gib():
+    try:
+        import psutil
+
+        return psutil.Process(os.getpid()).memory_info().rss / (1024**3)
+    except Exception:
+        return None
+
+
+def mem_print_rss(tag):
+    r = mem_rss_gib()
+    if r is None:
+        print(
+            f"[mem] {tag}: host RSS unavailable (pip install psutil)",
+            flush=True,
+        )
+    else:
+        print(f"[mem] {tag}: host process RSS ~{r:.4f} GiB", flush=True)
+
+
+def _numpy_storage_bytes(obj, _seen=None):
+    """Rough sum of ndarray buffer bytes (handles object arrays and nesting)."""
+    if _seen is None:
+        _seen = set()
+    if obj is None or isinstance(obj, (bool, int, float, str, bytes)):
+        return 0
+    oid = id(obj)
+    if oid in _seen:
+        return 0
+    if isinstance(obj, np.ndarray):
+        _seen.add(oid)
+        if obj.dtype == object:
+            return sum(_numpy_storage_bytes(x, _seen) for x in obj.flat)
+        return int(obj.nbytes)
+    if isinstance(obj, (list, tuple)):
+        _seen.add(oid)
+        return sum(_numpy_storage_bytes(x, _seen) for x in obj)
+    if isinstance(obj, dict):
+        _seen.add(oid)
+        return sum(_numpy_storage_bytes(x, _seen) for x in obj.values())
+    return 0
+
+
+def print_rplanhg_dataset_storage_estimate(dataset):
+    rank = MPI.COMM_WORLD.Get_rank()
+    attr_names = (
+        "graphs",
+        "houses",
+        "door_masks",
+        "self_masks",
+        "gen_masks",
+        "syn_graphs",
+        "syn_houses",
+        "syn_door_masks",
+        "syn_self_masks",
+        "syn_gen_masks",
+        "org_graphs",
+        "org_houses",
+        "subgraphs",
+    )
+    parts = []
+    total = 0
+    for name in attr_names:
+        if not hasattr(dataset, name):
+            continue
+        b = _numpy_storage_bytes(getattr(dataset, name))
+        if b:
+            total += b
+            parts.append(f"{name}={b}")
+    parts_str = "; ".join(parts) if parts else "(no ndarray-like fields scanned)"
+    print(
+        f"[mem] rank={rank} Dataset numpy/array storage estimate: {total} bytes "
+        f"({total / (1024**3):.4f} GiB)",
+        flush=True,
+    )
+    print(f"[mem] rank={rank} Dataset breakdown bytes: {parts_str}", flush=True)
+
+
 def load_rplanhg_data(
     batch_size,
     analog_bit,
@@ -42,22 +121,36 @@ def load_rplanhg_data(
     dataset = RPlanhgDataset(set_name, analog_bit, target_set)
     print(f"[load_rplanhg_data] rank={rank} after RPlanhgDataset(...)", flush=True)
 
+    print_rplanhg_dataset_storage_estimate(dataset)
+    mem_print_rss("after RPlanhgDataset constructed (generator first next)")
+
     if deterministic:
-        print(f"[load_rplanhg_data] rank={rank} branch deterministic: before DataLoader", flush=True)
+        print(f"[load_rplanhg_data] rank={rank} branch deterministic: before DataLoader (num_workers=0)", flush=True)
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=False, num_workers=2, drop_last=False
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+            drop_last=False,
         )
         print(f"[load_rplanhg_data] rank={rank} branch deterministic: after DataLoader", flush=True)
     else:
-        print(f"[load_rplanhg_data] rank={rank} branch train: before DataLoader", flush=True)
+        print(f"[load_rplanhg_data] rank={rank} branch train: before DataLoader (num_workers=0)", flush=True)
         loader = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True, num_workers=2, drop_last=False
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            drop_last=False,
         )
         print(f"[load_rplanhg_data] rank={rank} branch train: after DataLoader", flush=True)
+
+    mem_print_rss("after DataLoader created (still no batches prefetched)")
 
     print(f"[load_rplanhg_data] rank={rank} before while True generator", flush=True)
     while True:
         yield from loader
+
 
 def make_non_manhattan(poly, polygon, house_poly):
     dist = abs(poly[2]-poly[0])
