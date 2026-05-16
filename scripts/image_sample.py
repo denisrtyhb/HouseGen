@@ -18,7 +18,7 @@ import imageio
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from pytorch_fid.fid_score import calculate_fid_given_paths
-from house_diffusion.rplanhg_datasets import load_rplanhg_data, mem_print_rss
+from house_diffusion.rplanhg_datasets import load_rplanhg_data
 from house_diffusion import dist_util, logger
 from house_diffusion.script_util import (
     model_and_diffusion_defaults,
@@ -39,25 +39,6 @@ from shapely.geometry import Polygon
 # np.random.seed(0)
 
 bin_to_int = lambda x: int("".join([str(int(i.cpu().data)) for i in x]), 2)
-def _torch_tensors_bytes_recursive(obj):
-    if isinstance(obj, th.Tensor):
-        return obj.numel() * obj.element_size()
-    if isinstance(obj, dict):
-        return sum(_torch_tensors_bytes_recursive(v) for v in obj.values())
-    if isinstance(obj, (list, tuple)):
-        return sum(_torch_tensors_bytes_recursive(x) for x in obj)
-    return 0
-
-
-def _mem_cuda_print(tag):
-    if not th.cuda.is_available():
-        return
-    allocated = th.cuda.memory_allocated() / (1024**3)
-    reserved = th.cuda.memory_reserved() / (1024**3)
-    print(
-        f"[mem] {tag}: CUDA allocated ~{allocated:.4f} GiB, reserved ~{reserved:.4f} GiB",
-        flush=True,
-    )
 
 
 def bin_to_int_sample(sample, resolution=256):
@@ -315,7 +296,6 @@ def convert_folder(folder_name):
     svg_ext = {".svg"}
     raster_ext = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
 
-    n_conv = 0
     for p in sorted(src.iterdir()):
         if not p.is_file():
             continue
@@ -323,12 +303,9 @@ def convert_folder(folder_name):
         out_path = dst / f"{p.stem}.png"
         if suf in svg_ext:
             out_path.write_bytes(cairosvg.svg2png(url=str(p)))
-            n_conv += 1
         elif suf in raster_ext:
             Image.open(p).convert("RGB").save(out_path, format="PNG")
-            n_conv += 1
 
-    print(f"convert_folder: {src} -> {dst} ({n_conv} images)", flush=True)
     return str(dst)
 
 
@@ -348,21 +325,11 @@ def main():
     )
     model.to(dist_util.dev())
     model.eval()
-    _model_mem = sum(
-        t.numel() * t.element_size()
-        for t in list(model.parameters()) + list(model.buffers())
-    )
-    print(
-        f"Model tensor memory (parameters+buffers): {_model_mem / (1024 ** 3):.4f} GiB "
-        f"({_model_mem} bytes)",
-        flush=True,
-    )
-    _mem_cuda_print("after model load (same as parameter sum on GPU)")
-    mem_print_rss("after model load")
-    print("Model and diffusion created!", flush=True)
+    print(f"Model loaded on {dist_util.dev()}.", flush=True)
 
     errors = []
-    for _ in range(5):
+    num_eval_rounds = 5
+    for run_i in range(num_eval_rounds):
         logger.log("sampling...")
         tmp_count = 0
         os.makedirs('outputs/pred', exist_ok=True)
@@ -384,33 +351,18 @@ def main():
                 max_length=args.max_length,
             )
         else:
-            print("dataset does not exist!")
-            assert False
-        print("Data loading complete!", flush=True)
+            raise RuntimeError(f"Unsupported dataset {args.dataset!r}")
+
         graph_errors = []
         while tmp_count < args.num_samples:
-            print("Sampling loop iteration: ", tmp_count, flush=True)
             model_kwargs = {}
             sample_fn = (
                 diffusion.p_sample_loop if not args.use_ddim else diffusion.ddim_sample_loop
             )
             data_sample, model_kwargs = next(data)
-            cpu_batch_bytes = (
-                data_sample.numel() * data_sample.element_size()
-                + _torch_tensors_bytes_recursive(model_kwargs)
-            )
-            print(
-                f"[mem] one batch (CPU tensors from DataLoader): {cpu_batch_bytes} bytes "
-                f"({cpu_batch_bytes / (1024**2):.2f} MiB)",
-                flush=True,
-            )
-            mem_print_rss("after next(data), before .cuda() on batch")
             for key in model_kwargs:
                 model_kwargs[key] = model_kwargs[key].cuda()
-            mem_print_rss("after model_kwargs tensors moved to CUDA")
-            _mem_cuda_print("after batch conditioning on CUDA")
 
-            print("Starting sample generation...", flush=True)
             sample = sample_fn(
                 model,
                 data_sample.shape,
@@ -418,31 +370,14 @@ def main():
                 model_kwargs=model_kwargs,
                 analog_bit=args.analog_bit,
             )
-            samp_b = sample.numel() * sample.element_size()
-            print(
-                f"[mem] sample tensor returned by diffusion: {samp_b} bytes "
-                f"({samp_b / (1024**3):.4f} GiB)",
-                flush=True,
-            )
-            print("Sample generation complete!", flush=True)
-            mem_print_rss("after diffusion sample_loop (peak host may include cairo/mpl soon)")
-            _mem_cuda_print("after diffusion sample_loop")
             sample_gt = data_sample.cuda().unsqueeze(0)
             sample = sample.permute([0, 1, 3, 2])
             sample_gt = sample_gt.permute([0, 1, 3, 2])
             if args.analog_bit:
                 sample_gt = bin_to_int_sample(sample_gt)
                 sample = bin_to_int_sample(sample)
-            print("Bin to int conversion complete!", flush=True)
-            print("Saving samples...", flush=True)
-            mem_print_rss("before save_samples (gt)")
             graph_error = save_samples(sample_gt, 'gt', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, draw_graph=args.draw_graph, save_svg=args.save_svg)
-            print("Saving samples complete!", flush=True)
-            mem_print_rss("after save_samples (gt)")
             graph_error = save_samples(sample, 'pred', model_kwargs, tmp_count, num_room_types, ID_COLOR=ID_COLOR, is_syn=True, draw_graph=args.draw_graph, save_svg=args.save_svg)
-            print("Saving synthetic samples complete!", flush=True)
-            mem_print_rss("after save_samples (pred)")
-            _mem_cuda_print("after both save_samples in this iteration")
             graph_errors.extend(graph_error)
             tmp_count+=sample_gt.shape[1]
         logger.log("sampling complete")
@@ -451,14 +386,23 @@ def main():
         fid_score = calculate_fid_given_paths(
             [fid_gt_png, fid_pred_png], 64, "cuda", 2048
         )
-        mem_print_rss("after calculate_fid_given_paths")
-        _mem_cuda_print("after FID")
-        print(f'FID: {fid_score}')
-        print(f'Compatibility: {np.mean(graph_errors)}')
-        errors.append([fid_score, np.mean(graph_errors)])
+        compat = float(np.mean(graph_errors))
+        errors.append([fid_score, compat])
+        print(
+            f"[{run_i + 1}/{num_eval_rounds}] FID={fid_score:.4f} compatibility={compat:.4f}",
+            flush=True,
+        )
+
     errors = np.array(errors)
-    print(f'Diversity mean: {errors[:, 0].mean()} \t Diversity std: {errors[:, 0].std()}')
-    print(f'Compatibility mean: {errors[:, 1].mean()} \t Compatibility std: {errors[:, 1].std()}')
+    logger.log(
+        "FID μ=%s σ=%s | compatibility μ=%s σ=%s"
+        % (
+            errors[:, 0].mean(),
+            errors[:, 0].std(),
+            errors[:, 1].mean(),
+            errors[:, 1].std(),
+        )
+    )
 
 def create_argparser():
     defaults = dict(

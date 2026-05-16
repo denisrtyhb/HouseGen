@@ -4,7 +4,6 @@ import torch as th
 
 from PIL import Image, ImageDraw
 import blobfile as bf
-from mpi4py import MPI
 import numpy as np
 from torch.utils.data import DataLoader, Dataset
 from glob import glob
@@ -19,106 +18,6 @@ from collections import defaultdict
 import copy
 
 
-def mem_rss_gib():
-    try:
-        import psutil
-
-        return psutil.Process(os.getpid()).memory_info().rss / (1024**3)
-    except Exception:
-        return None
-
-
-def mem_print_rss(tag):
-    r = mem_rss_gib()
-    if r is None:
-        print(
-            f"[mem] {tag}: host RSS unavailable (pip install psutil)",
-            flush=True,
-        )
-    else:
-        print(f"[mem] {tag}: host process RSS ~{r:.4f} GiB", flush=True)
-
-
-def _numpy_storage_bytes(obj, _seen=None):
-    """Rough sum of ndarray buffer bytes (handles object arrays and nesting)."""
-    if _seen is None:
-        _seen = set()
-    if obj is None or isinstance(obj, (bool, int, float, str, bytes)):
-        return 0
-    oid = id(obj)
-    if oid in _seen:
-        return 0
-    if isinstance(obj, np.ndarray):
-        _seen.add(oid)
-        if obj.dtype == object:
-            return sum(_numpy_storage_bytes(x, _seen) for x in obj.flat)
-        return int(obj.nbytes)
-    if isinstance(obj, (list, tuple)):
-        _seen.add(oid)
-        return sum(_numpy_storage_bytes(x, _seen) for x in obj)
-    if isinstance(obj, dict):
-        _seen.add(oid)
-        return sum(_numpy_storage_bytes(x, _seen) for x in obj.values())
-    return 0
-
-
-def _mem_log_np_storage(rank, label, arr):
-    """Best-effort bytes for an ndarray (object arrays summed via _numpy_storage_bytes)."""
-    if arr is None:
-        return
-    if isinstance(arr, np.ndarray):
-        b = (
-            _numpy_storage_bytes(arr)
-            if arr.dtype == object
-            else int(arr.nbytes)
-        )
-        print(
-            f"[mem] rank={rank} RAM {label}: {b} bytes ({b / (1024**3):.4f} GiB) "
-            f"shape={arr.shape} dtype={arr.dtype}",
-            flush=True,
-        )
-        return
-    print(
-        f"[mem] rank={rank} RAM {label}: skipped (type={type(arr).__name__}, not ndarray)",
-        flush=True,
-    )
-
-
-def print_rplanhg_dataset_storage_estimate(dataset):
-    rank = MPI.COMM_WORLD.Get_rank()
-    attr_names = (
-        "graphs",
-        "houses",
-        "door_masks",
-        "self_masks",
-        "gen_masks",
-        "syn_graphs",
-        "syn_houses",
-        "syn_door_masks",
-        "syn_self_masks",
-        "syn_gen_masks",
-        "org_graphs",
-        "org_houses",
-        "subgraphs",
-    )
-    parts = []
-    total = 0
-    for name in attr_names:
-        if not hasattr(dataset, name):
-            continue
-        b = _numpy_storage_bytes(getattr(dataset, name))
-        if b:
-            total += b
-            parts.append(f"{name}={b}")
-    parts_str = "; ".join(parts) if parts else "(no ndarray-like fields scanned)"
-    print(
-        f"[mem] rank={rank} Dataset numpy/array storage estimate: {total} bytes "
-        f"({total / (1024**3):.4f} GiB)",
-        flush=True,
-    )
-    print(f"[mem] rank={rank} Dataset breakdown bytes: {parts_str}", flush=True)
-
-
 def load_rplanhg_data(
     batch_size,
     analog_bit,
@@ -129,30 +28,11 @@ def load_rplanhg_data(
     """
     For a dataset, create a generator over (shapes, kwargs) pairs.
     """
-    rank = MPI.COMM_WORLD.Get_rank()
-    print(
-        f"[load_rplanhg_data] rank={rank} start batch_size={batch_size} "
-        f"analog_bit={analog_bit} target_set={target_set} set_name={set_name!r} "
-        f"max_length={max_length!r}",
-        flush=True,
-    )
-
-    print(f"[load_rplanhg_data] rank={rank} loading {set_name} of target set {target_set}", flush=True)
-
     deterministic = False if set_name == "train" else True
-    print(f"[load_rplanhg_data] rank={rank} after deterministic={deterministic}", flush=True)
-
-    print(f"[load_rplanhg_data] rank={rank} before RPlanhgDataset(...)", flush=True)
     dataset = RPlanhgDataset(
         set_name, analog_bit, target_set, max_length=max_length
     )
-    print(f"[load_rplanhg_data] rank={rank} after RPlanhgDataset(...)", flush=True)
-
-    print_rplanhg_dataset_storage_estimate(dataset)
-    mem_print_rss("after RPlanhgDataset constructed (generator first next)")
-
     if deterministic:
-        print(f"[load_rplanhg_data] rank={rank} branch deterministic: before DataLoader (num_workers=0)", flush=True)
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -160,9 +40,7 @@ def load_rplanhg_data(
             num_workers=0,
             drop_last=False,
         )
-        print(f"[load_rplanhg_data] rank={rank} branch deterministic: after DataLoader", flush=True)
     else:
-        print(f"[load_rplanhg_data] rank={rank} branch train: before DataLoader (num_workers=0)", flush=True)
         loader = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -170,11 +48,6 @@ def load_rplanhg_data(
             num_workers=0,
             drop_last=False,
         )
-        print(f"[load_rplanhg_data] rank={rank} branch train: after DataLoader", flush=True)
-
-    mem_print_rss("after DataLoader created (still no batches prefetched)")
-
-    print(f"[load_rplanhg_data] rank={rank} before while True generator", flush=True)
     while True:
         yield from loader
 
@@ -231,15 +104,8 @@ class RPlanhgDataset(Dataset):
         max_length=None,
     ):
         super().__init__()
-        rank = MPI.COMM_WORLD.Get_rank()
         self.max_length = (
             int(max_length) if max_length is not None and int(max_length) > 0 else None
-        )
-        print(
-            f"[RPlanhgDataset] rank={rank} __init__ start set_name={set_name!r} "
-            f"analog_bit={analog_bit} target_set={target_set} "
-            f"max_length_arg={max_length!r} max_length_cap={self.max_length!r}",
-            flush=True,
         )
         base_dir = '../datasets/rplan'
         self.non_manhattan = non_manhattan
@@ -252,19 +118,8 @@ class RPlanhgDataset(Dataset):
         max_num_points = 100
         if self.set_name == 'eval':
             cnumber_dist = np.load(f'processed_rplan/rplan_train_{target_set}_cndist.npz', allow_pickle=True)['cnumber_dist'].item()
-            print(f"[RPlanhgDataset] rank={rank} eval: loaded cnumber_dist train npz", flush=True)
         _processed_npz = f'processed_rplan/rplan_{set_name}_{target_set}.npz'
-        print(
-            f"[RPlanhgDataset] rank={rank} os.path.exists({_processed_npz!r})={os.path.exists(_processed_npz)}",
-            flush=True,
-        )
         if os.path.exists(_processed_npz):
-            print(f"[RPlanhgDataset] rank={rank} before np.load main processed npz", flush=True)
-            print(
-                f"[mem] rank={rank} main npz on-disk size: {os.path.getsize(_processed_npz)} bytes "
-                f"(~{os.path.getsize(_processed_npz) / (1024**3):.4f} GiB)",
-                flush=True,
-            )
             data = np.load(_processed_npz, allow_pickle=True)
             _nh = len(data["houses"])
             if self.max_length is not None:
@@ -274,11 +129,6 @@ class RPlanhgDataset(Dataset):
                 self.door_masks = np.copy(data["door_masks"][:_take])
                 self.self_masks = np.copy(data["self_masks"][:_take])
                 self.gen_masks = np.copy(data["gen_masks"][:_take])
-                print(
-                    f"[RPlanhgDataset] rank={rank} truncated main arrays to {_take} rows "
-                    f"(max_length={self.max_length}, on_disk={_nh})",
-                    flush=True,
-                )
             else:
                 self.graphs = data["graphs"]
                 self.houses = data["houses"]
@@ -290,34 +140,8 @@ class RPlanhgDataset(Dataset):
             self.num_coords = 2
             self.max_num_points = max_num_points
             cnumber_dist = np.load(f'processed_rplan/rplan_train_{target_set}_cndist.npz', allow_pickle=True)['cnumber_dist'].item()
-            for _fld in (
-                "graphs",
-                "houses",
-                "door_masks",
-                "self_masks",
-                "gen_masks",
-            ):
-                _mem_log_np_storage(rank, f"after main np.load self.{_fld}", getattr(self, _fld))
-            print(
-                f"[RPlanhgDataset] rank={rank} after main npz: len(houses)={len(self.houses)} len(graphs)={len(self.graphs)}",
-                flush=True,
-            )
-            mem_print_rss("RPlanhgDataset: after main .npz arrays, before syn load")
             if self.set_name == 'eval':
                 _syn_npz = f'processed_rplan/rplan_{set_name}_{target_set}_syn.npz'
-                _syn_exists = os.path.exists(_syn_npz)
-                print(
-                    f"[RPlanhgDataset] rank={rank} before np.load {_syn_npz!r} exists={_syn_exists}",
-                    flush=True,
-                )
-                if _syn_exists:
-                    _sz = os.path.getsize(_syn_npz)
-                    print(
-                        f"[mem] rank={rank} syn npz on-disk size: {_sz} bytes "
-                        f"(~{_sz / (1024**3):.4f} GiB)",
-                        flush=True,
-                    )
-                mem_print_rss("RPlanhgDataset: immediately before np.load(syn)")
                 syn_data = np.load(_syn_npz, allow_pickle=True)
                 _ns = len(syn_data["houses"])
                 if self.max_length is not None:
@@ -327,11 +151,6 @@ class RPlanhgDataset(Dataset):
                     self.syn_door_masks = np.copy(syn_data["door_masks"][:_take_s])
                     self.syn_self_masks = np.copy(syn_data["self_masks"][:_take_s])
                     self.syn_gen_masks = np.copy(syn_data["gen_masks"][:_take_s])
-                    print(
-                        f"[RPlanhgDataset] rank={rank} truncated syn arrays to {_take_s} rows "
-                        f"(max_length={self.max_length}, on_disk={_ns})",
-                        flush=True,
-                    )
                 else:
                     self.syn_graphs = syn_data["graphs"]
                     self.syn_houses = syn_data["houses"]
@@ -340,30 +159,7 @@ class RPlanhgDataset(Dataset):
                     self.syn_gen_masks = syn_data["gen_masks"]
                 del syn_data
                 gc.collect()
-                for _fld in (
-                    "syn_graphs",
-                    "syn_houses",
-                    "syn_door_masks",
-                    "syn_self_masks",
-                    "syn_gen_masks",
-                ):
-                    _mem_log_np_storage(rank, f"after syn np.load self.{_fld}", getattr(self, _fld))
-                print(
-                    f"[RPlanhgDataset] rank={rank} after syn npz: len(syn_houses)={len(self.syn_houses)}",
-                    flush=True,
-                )
-                mem_print_rss("RPlanhgDataset: after np.load(syn) [if missing, OOM during syn load]")
-            print(
-                f"[mem] rank={rank} RPlanhgDataset full storage estimate (inside __init__, before load_rplanhg_data resumes)",
-                flush=True,
-            )
-            print_rplanhg_dataset_storage_estimate(self)
-            mem_print_rss("RPlanhgDataset __init__ finished (cached .npz branch)")
         else:
-            print(
-                f"[RPlanhgDataset] rank={rank} no processed npz; building from {base_dir!r}",
-                flush=True,
-            )
             with open(f'{base_dir}/list.txt') as f:
                 lines = f.readlines()
             cnt=0
@@ -382,10 +178,6 @@ class RPlanhgDataset(Dataset):
             if self.max_length is not None and len(self.subgraphs) > 0:
                 _tg = min(self.max_length, len(self.subgraphs))
                 self.subgraphs = self.subgraphs[:_tg]
-                print(
-                    f"[RPlanhgDataset] rank={rank} truncated scratch subgraphs to {_tg}",
-                    flush=True,
-                )
 
             for graph in tqdm(self.subgraphs):
                 rms_type = graph[0]
@@ -497,10 +289,6 @@ class RPlanhgDataset(Dataset):
                 gen_masks = gen_masks[:_tl]
                 graphs = graphs[:_tl]
                 gc.collect()
-                print(
-                    f"[RPlanhgDataset] rank={rank} truncated built train/main lists to {_tl}",
-                    flush=True,
-                )
             self.max_num_points = max_num_points
             self.houses = houses
             self.door_masks = door_masks
@@ -583,10 +371,6 @@ class RPlanhgDataset(Dataset):
                     gen_masks = gen_masks[:_ts]
                     graphs = graphs[:_ts]
                     gc.collect()
-                    print(
-                        f"[RPlanhgDataset] rank={rank} truncated built scratch syn lists to {_ts}",
-                        flush=True,
-                    )
                 self.syn_houses = houses
                 self.syn_door_masks = door_masks
                 self.syn_self_masks = self_masks
