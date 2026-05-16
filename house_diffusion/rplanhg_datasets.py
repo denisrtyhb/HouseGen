@@ -61,6 +61,28 @@ def _numpy_storage_bytes(obj, _seen=None):
     return 0
 
 
+def _mem_log_np_storage(rank, label, arr):
+    """Best-effort bytes for an ndarray (object arrays summed via _numpy_storage_bytes)."""
+    if arr is None:
+        return
+    if isinstance(arr, np.ndarray):
+        b = (
+            _numpy_storage_bytes(arr)
+            if arr.dtype == object
+            else int(arr.nbytes)
+        )
+        print(
+            f"[mem] rank={rank} RAM {label}: {b} bytes ({b / (1024**3):.4f} GiB) "
+            f"shape={arr.shape} dtype={arr.dtype}",
+            flush=True,
+        )
+        return
+    print(
+        f"[mem] rank={rank} RAM {label}: skipped (type={type(arr).__name__}, not ndarray)",
+        flush=True,
+    )
+
+
 def print_rplanhg_dataset_storage_estimate(dataset):
     rank = MPI.COMM_WORLD.Get_rank()
     attr_names = (
@@ -236,6 +258,14 @@ class RPlanhgDataset(Dataset):
             self.num_coords = 2
             self.max_num_points = max_num_points
             cnumber_dist = np.load(f'processed_rplan/rplan_train_{target_set}_cndist.npz', allow_pickle=True)['cnumber_dist'].item()
+            for _fld in (
+                "graphs",
+                "houses",
+                "door_masks",
+                "self_masks",
+                "gen_masks",
+            ):
+                _mem_log_np_storage(rank, f"after main np.load self.{_fld}", getattr(self, _fld))
             print(
                 f"[RPlanhgDataset] rank={rank} after main npz: len(houses)={len(self.houses)} len(graphs)={len(self.graphs)}",
                 flush=True,
@@ -262,6 +292,14 @@ class RPlanhgDataset(Dataset):
                 self.syn_door_masks = data['door_masks']
                 self.syn_self_masks = data['self_masks']
                 self.syn_gen_masks = data['gen_masks']
+                for _fld in (
+                    "syn_graphs",
+                    "syn_houses",
+                    "syn_door_masks",
+                    "syn_self_masks",
+                    "syn_gen_masks",
+                ):
+                    _mem_log_np_storage(rank, f"after syn np.load self.{_fld}", getattr(self, _fld))
                 print(
                     f"[RPlanhgDataset] rank={rank} after syn npz: len(syn_houses)={len(self.syn_houses)}",
                     flush=True,
