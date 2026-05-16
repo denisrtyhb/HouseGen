@@ -11,7 +11,7 @@ import torch as th
 
 import io
 import PIL.Image as Image
-import drawSvg as drawsvg
+import drawsvg as drawsvg
 import cairosvg
 import imageio
 from tqdm import tqdm
@@ -31,7 +31,7 @@ import networkx as nx
 from collections import defaultdict
 from shapely.geometry import Polygon
 from shapely.geometry.base import geom_factory
-from shapely.geos import lgeos
+from shapely import _geos as lgeos
 
 # import random
 # th.manual_seed(0)
