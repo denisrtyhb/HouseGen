@@ -284,9 +284,9 @@ def save_samples(
             images3.append(Image.open(io.BytesIO(cairosvg.svg2png(draw3.as_svg()))))
             if k==sample.shape[0]-1 or True:
                 if save_edges:
-                    draw.saveSvg(f'outputs/{ext}/{tmp_count+i}_{k}_{ext}.svg')
+                    draw.save_svg(f'outputs/{ext}/{tmp_count+i}_{k}_{ext}.svg')
                 if save_svg:
-                    draw_color.saveSvg(f'outputs/{ext}/{tmp_count+i}c_{k}_{ext}.svg')
+                    draw_color.save_svg(f'outputs/{ext}/{tmp_count+i}c_{k}_{ext}.svg')
                 else:
                     Image.open(io.BytesIO(cairosvg.svg2png(draw_color.as_svg()))).save(f'outputs/{ext}/{tmp_count+i}c_{ext}.png')
             if k==sample.shape[0]-1:
