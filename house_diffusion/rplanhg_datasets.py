@@ -104,6 +104,12 @@ get_one_hot = lambda x, z: np.eye(z)[x]
 class RPlanhgDataset(Dataset):
     def __init__(self, set_name, analog_bit, target_set, non_manhattan=False):
         super().__init__()
+        rank = MPI.COMM_WORLD.Get_rank()
+        print(
+            f"[RPlanhgDataset] rank={rank} __init__ start set_name={set_name!r} "
+            f"analog_bit={analog_bit} target_set={target_set}",
+            flush=True,
+        )
         base_dir = '../datasets/rplan'
         self.non_manhattan = non_manhattan
         self.set_name = set_name
@@ -115,8 +121,15 @@ class RPlanhgDataset(Dataset):
         max_num_points = 100
         if self.set_name == 'eval':
             cnumber_dist = np.load(f'processed_rplan/rplan_train_{target_set}_cndist.npz', allow_pickle=True)['cnumber_dist'].item()
-        if os.path.exists(f'processed_rplan/rplan_{set_name}_{target_set}.npz'):
-            data = np.load(f'processed_rplan/rplan_{set_name}_{target_set}.npz', allow_pickle=True)
+            print(f"[RPlanhgDataset] rank={rank} eval: loaded cnumber_dist train npz", flush=True)
+        _processed_npz = f'processed_rplan/rplan_{set_name}_{target_set}.npz'
+        print(
+            f"[RPlanhgDataset] rank={rank} os.path.exists({_processed_npz!r})={os.path.exists(_processed_npz)}",
+            flush=True,
+        )
+        if os.path.exists(_processed_npz):
+            print(f"[RPlanhgDataset] rank={rank} before np.load main processed npz", flush=True)
+            data = np.load(_processed_npz, allow_pickle=True)
             self.graphs = data['graphs']
             self.houses = data['houses']
             self.door_masks = data['door_masks']
@@ -125,14 +138,28 @@ class RPlanhgDataset(Dataset):
             self.num_coords = 2
             self.max_num_points = max_num_points
             cnumber_dist = np.load(f'processed_rplan/rplan_train_{target_set}_cndist.npz', allow_pickle=True)['cnumber_dist'].item()
+            print(
+                f"[RPlanhgDataset] rank={rank} after main npz: len(houses)={len(self.houses)} len(graphs)={len(self.graphs)}",
+                flush=True,
+            )
             if self.set_name == 'eval':
-                data = np.load(f'processed_rplan/rplan_{set_name}_{target_set}_syn.npz', allow_pickle=True)
+                _syn_npz = f'processed_rplan/rplan_{set_name}_{target_set}_syn.npz'
+                print(f"[RPlanhgDataset] rank={rank} before np.load {_syn_npz!r}", flush=True)
+                data = np.load(_syn_npz, allow_pickle=True)
                 self.syn_graphs = data['graphs']
                 self.syn_houses = data['houses']
                 self.syn_door_masks = data['door_masks']
                 self.syn_self_masks = data['self_masks']
                 self.syn_gen_masks = data['gen_masks']
+                print(
+                    f"[RPlanhgDataset] rank={rank} after syn npz: len(syn_houses)={len(self.syn_houses)}",
+                    flush=True,
+                )
         else:
+            print(
+                f"[RPlanhgDataset] rank={rank} no processed npz; building from {base_dir!r}",
+                flush=True,
+            )
             with open(f'{base_dir}/list.txt') as f:
                 lines = f.readlines()
             cnt=0
