@@ -129,6 +129,7 @@ class RPlanhgDataset(Dataset):
         )
         if os.path.exists(_processed_npz):
             print(f"[RPlanhgDataset] rank={rank} before np.load main processed npz", flush=True)
+            print("Size of processed npz: ", os.path.getsize(_processed_npz))
             data = np.load(_processed_npz, allow_pickle=True)
             self.graphs = data['graphs']
             self.houses = data['houses']
